@@ -4,6 +4,7 @@ vision.py — Webcam capture, MediaPipe landmark detection, feature extraction,
 """
 
 
+import os
 import cv2
 import numpy as np
 import mediapipe as mp
@@ -70,6 +71,19 @@ FACE_LEFT  = 234
 FACE_RIGHT = 454
 
 
+# MediaPipe Tasks face landmarker model
+_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_landmarker.task")
+_MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/"
+               "face_landmarker/face_landmarker/float16/1/face_landmarker.task")
+
+def _ensure_face_model():
+    if not os.path.exists(_MODEL_PATH):
+        import urllib.request
+        print("[vision] Downloading face_landmarker.task …")
+        urllib.request.urlretrieve(_MODEL_URL, _MODEL_PATH)
+        print("[vision] Model ready.")
+
+
 # Keras model emotion order (matches FER-2013 training label indices)
 _KERAS_EMOTIONS = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
 
@@ -127,15 +141,18 @@ class FaceProcessor:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
 
-        # MediaPipe Face Mesh
-        self.mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.6,
+        # MediaPipe Face Landmarker (Tasks API — works on Windows and Linux)
+        _ensure_face_model()
+        _opts = mp.tasks.vision.FaceLandmarkerOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=_MODEL_PATH),
+            running_mode=mp.tasks.vision.RunningMode.VIDEO,
+            num_faces=1,
+            min_face_detection_confidence=0.6,
+            min_face_presence_confidence=0.5,
             min_tracking_confidence=0.5,
         )
-        self.mp_drawing  = mp.solutions.drawing_utils
+        self.face_landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(_opts)
+        self._detect_ts_ms   = 0
         self.show_mesh        = False
         self.show_confidence  = False
 
@@ -214,7 +231,7 @@ class FaceProcessor:
 
     def release(self):
         self.cap.release()
-        self.face_mesh.close()
+        self.face_landmarker.close()
 
 
     def reset_calibration(self):
@@ -289,19 +306,21 @@ class FaceProcessor:
         rgb  = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 
-        results = self.face_mesh.process(rgb)
+        self._detect_ts_ms += 33
+        mp_img  = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        results = self.face_landmarker.detect_for_video(mp_img, self._detect_ts_ms)
         self._last_mesh_results = results          # cache for mesh overlay draw
 
 
         features = FaceFeatures(timestamp=time.time())
 
 
-        if not results.multi_face_landmarks:
+        if not results.face_landmarks:
             features.emotion = self._get_majority_emotion("neutral")
             return features
 
 
-        lm = results.multi_face_landmarks[0].landmark
+        lm = results.face_landmarks[0]
 
 
         def pt(idx):
@@ -508,24 +527,12 @@ class FaceProcessor:
 
         # Face mesh overlay — uses cached result, no second MP inference
         if self.show_mesh and self._last_mesh_results is not None:
-            if self._last_mesh_results.multi_face_landmarks:
-                for face_landmarks in self._last_mesh_results.multi_face_landmarks:
-                    self.mp_drawing.draw_landmarks(
-                        image=frame,
-                        landmark_list=face_landmarks,
-                        connections=self.mp_face_mesh.FACEMESH_TESSELATION,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=self.mp_drawing.DrawingSpec(
-                            color=(0, 255, 100), thickness=1, circle_radius=1)
-                    )
-                    self.mp_drawing.draw_landmarks(
-                        image=frame,
-                        landmark_list=face_landmarks,
-                        connections=self.mp_face_mesh.FACEMESH_CONTOURS,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=self.mp_drawing.DrawingSpec(
-                            color=(0, 180, 255), thickness=1, circle_radius=1)
-                    )
+            if self._last_mesh_results.face_landmarks:
+                for face_lms in self._last_mesh_results.face_landmarks:
+                    for lm_pt in face_lms:
+                        cx = int(lm_pt.x * w)
+                        cy = int(lm_pt.y * h)
+                        cv2.circle(frame, (cx, cy), 1, (0, 255, 100), -1)
 
 
         # Text overlay
