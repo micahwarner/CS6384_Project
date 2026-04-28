@@ -1,9 +1,9 @@
 """
-test_offline.py — Offline evaluation using FER-2013 dataset
+test_offline.py — Offline evaluation using the MobileNetV3 PyTorch model.
 
 Usage
 ─────
-    # Against a local FER-2013 CSV (column: 'emotion' int, 'pixels' str, 'Usage' str)
+    # Against a local FER-2013 CSV (columns: 'emotion' int, 'pixels' str, 'Usage' str)
     python test_offline.py --fer2013 /path/to/fer2013.csv --split PublicTest
 
     # Against a folder-structured dataset (subfolders named by emotion)
@@ -14,63 +14,95 @@ Usage
 """
 
 import argparse
+import json
 import logging
 import os
 import random
 import warnings
-import numpy as np
+from collections import Counter
+from pathlib import Path
+
 import cv2
+import numpy as np
+import torch
+import torchvision.models as models
+import torchvision.transforms as T
+from PIL import Image
+import timm
+
 from evaluation import EmotionEvaluator, LatencyProfiler
 
-warnings.filterwarnings("ignore", category=UserWarning, module="keras")
+warnings.filterwarnings("ignore")
 logging.getLogger("py.warnings").setLevel(logging.ERROR)
 
-FER2013_LABELS = {0:"angry", 1:"disgust", 2:"fear", 3:"happy",
-                  4:"sad", 5:"surprise", 6:"neutral"}
 
-KERAS_EMOTIONS = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
+# ── Paths ──────────────────────────────────────────────────────────────────────
 
-LABEL_MAP = {
-    "angry":    "angry",
-    "disgust":  "disgust",
-    "fear":     "fear",
-    "happy":    "happy",
-    "sad":      "sad",
-    "surprise": "surprise",
-    "neutral":  "neutral",
+MODEL_DIR      = Path("models")
+MODEL_PATH     = MODEL_DIR / "best_model.pth"
+CLASS_IDX_PATH = MODEL_DIR / "class_to_idx.json"
+CONFIG_PATH    = MODEL_DIR / "config.json"
+
+FER2013_LABELS = {
+    0: "angry", 1: "disgust", 2: "fear", 3: "happy",
+    4: "sad",   5: "surprise", 6: "neutral"
 }
 
-
-# helpers
-
-def load_keras_model(fer_model):
-    """Extract the raw Keras classifier from a FER instance (handles name mangling)."""
-    # Try mangled private name first, then public fallback
-    model = getattr(fer_model, "_FER__emotion_classifier", None)
-    if model is None:
-        model = getattr(fer_model, "emotion_classifier", None)
-    return model
+LABEL_MAP = {e: e for e in FER2013_LABELS.values()}
 
 
-def predict_direct(keras_model, img_bgr: np.ndarray) -> str:
+# ── Model Loading ──────────────────────────────────────────────────────────────
+
+def load_model():
+    with open(CONFIG_PATH)    as f: config       = json.load(f)
+    with open(CLASS_IDX_PATH) as f: class_to_idx = json.load(f)
+
+    idx_to_class = {v: k for k, v in class_to_idx.items()}
+    num_classes  = len(class_to_idx)
+    img_size     = config.get("img_size", 112)               # ← was 48
+    device       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    arch = config.get("model_name", "mobilenetv3_large_100") # ← was "model"
+    m    = timm.create_model(arch, num_classes=num_classes, pretrained=False)
+
+    state = torch.load(MODEL_PATH, map_location=device)
+    if isinstance(state, dict) and "model_state_dict" in state:
+        state = state["model_state_dict"]
+    m.load_state_dict(state)
+    m.to(device).eval()
+
+    mean = config.get("mean", [0.485, 0.456, 0.406])
+    std  = config.get("std",  [0.229, 0.224, 0.225])
+    transform = T.Compose([
+        T.Grayscale(num_output_channels=3),
+        T.Resize((img_size, img_size)),
+        T.ToTensor(),
+        T.Normalize(mean=mean, std=std),
+    ])
+
+    print(f"[Model] {arch} ({num_classes} classes) on {device}")
+    return m, transform, idx_to_class, device
+
+
+# ── Inference ──────────────────────────────────────────────────────────────────
+
+def predict(model, transform, idx_to_class, device, img_bgr: np.ndarray) -> str:
     """
-    Classify emotion by feeding directly into the Keras model,
-    bypassing face detection entirely
-
-    img_bgr: any size BGR image (already cropped face)
-    returns: emotion label string
+    Classify a BGR face crop using MobileNetV3.
+    Returns the predicted emotion label string.
     """
-    gray   = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    gray   = cv2.resize(gray, (64, 64)).astype("float32") / 255.0
-    inp    = gray.reshape(1, 64, 64, 1)
-    preds  = keras_model.predict(inp, verbose=0)
-    return KERAS_EMOTIONS[int(np.argmax(preds))]
+    rgb    = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    pil    = Image.fromarray(rgb)
+    tensor = transform(pil).unsqueeze(0).to(device)
+    with torch.no_grad():
+        probs = torch.softmax(model(tensor), dim=1).squeeze(0)
+    return idx_to_class[int(probs.argmax())]
 
 
-# Smoke Test
+# ── Smoke Test ─────────────────────────────────────────────────────────────────
 
 def smoke_test():
-    """Verify the evaluation module is working with synthetic predictions."""
+    """Verify the evaluation module works with synthetic predictions."""
     print("\n[smoke] Running synthetic evaluation smoke test…")
     evaluator = EmotionEvaluator()
     np.random.seed(42)
@@ -82,11 +114,10 @@ def smoke_test():
     evaluator.report()
 
 
-# CSV Mode
+# ── CSV Mode ───────────────────────────────────────────────────────────────────
 
 def eval_on_fer2013(csv_path: str, split: str = "PublicTest", max_samples: int = 1000):
-    """Run the FER model on FER-2013 images from a CSV export and compute metrics."""
-    from fer import FER
+    """Run MobileNetV3 on FER-2013 images from a CSV export and compute metrics."""
     import pandas as pd
 
     print(f"\n[eval] Loading FER-2013 from {csv_path} (split={split})…")
@@ -95,21 +126,17 @@ def eval_on_fer2013(csv_path: str, split: str = "PublicTest", max_samples: int =
     df = df.head(max_samples)
     print(f"[eval] {len(df)} samples loaded.")
 
-    fer_model   = FER(mtcnn=False)
-    keras_model = load_keras_model(fer_model)
-    evaluator   = EmotionEvaluator()
-    profiler    = LatencyProfiler(window=200)
-
-    if keras_model is None:
-        print("[eval] ERROR: Could not extract Keras model from FER instance.")
-        return
+    model, transform, idx_to_class, device = load_model()
+    evaluator = EmotionEvaluator()
+    profiler  = LatencyProfiler(window=200)
 
     for i, row in df.iterrows():
+        # FER-2013 pixels are 48×48 grayscale — convert to BGR for consistency
         pixels  = np.array(row["pixels"].split(), dtype=np.uint8).reshape(48, 48)
-        img_bgr = cv2.cvtColor(cv2.resize(pixels, (64, 64)), cv2.COLOR_GRAY2BGR)
+        img_bgr = cv2.cvtColor(pixels, cv2.COLOR_GRAY2BGR)
 
         with profiler.measure("fer_inference"):
-            pred = predict_direct(keras_model, img_bgr)
+            pred = predict(model, transform, idx_to_class, device, img_bgr)
 
         gt = FER2013_LABELS[int(row["emotion"])]
         evaluator.record(predicted=pred, ground_truth=gt)
@@ -123,11 +150,11 @@ def eval_on_fer2013(csv_path: str, split: str = "PublicTest", max_samples: int =
     print("\n[eval] Results saved to fer2013_eval_results.csv")
 
 
-# ─Folder Mode
+# ── Folder Mode ────────────────────────────────────────────────────────────────
 
 def eval_on_folder(data_dir: str, max_samples: int = 1000):
     """
-    Run FER model on a folder-structured dataset.
+    Run MobileNetV3 on a folder-structured dataset.
 
     Expected layout:
         data_dir/
@@ -139,17 +166,9 @@ def eval_on_folder(data_dir: str, max_samples: int = 1000):
             sad/      *.jpg / *.png
             surprise/ *.jpg / *.png
     """
-    from fer import FER
-    from collections import Counter
-
-    fer_model   = FER(mtcnn=False)
-    keras_model = load_keras_model(fer_model)
-    evaluator   = EmotionEvaluator()
-    profiler    = LatencyProfiler(window=200)
-
-    if keras_model is None:
-        print("[eval] ERROR: Could not extract Keras model from FER instance.")
-        return
+    model, transform, idx_to_class, device = load_model()
+    evaluator = EmotionEvaluator()
+    profiler  = LatencyProfiler(window=200)
 
     # Collect all (image_path, gt_label) pairs
     samples = []
@@ -186,7 +205,7 @@ def eval_on_folder(data_dir: str, max_samples: int = 1000):
             continue
 
         with profiler.measure("fer_inference"):
-            pred = predict_direct(keras_model, img_bgr)
+            pred = predict(model, transform, idx_to_class, device, img_bgr)
 
         evaluator.record(predicted=pred, ground_truth=gt)
 
@@ -198,14 +217,14 @@ def eval_on_folder(data_dir: str, max_samples: int = 1000):
 
     evaluator.report()
     profiler.print_summary()
-    evaluator.save_csv("fer2013_eval_results.csv")
-    print("\n[eval] Results saved to fer2013_eval_results.csv")
+    evaluator.save_csv("folder_eval_results.csv")
+    print("\n[eval] Results saved to folder_eval_results.csv")
 
 
-# entry point
+# ── Entry Point ────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Offline FER emotion evaluation")
+    parser = argparse.ArgumentParser(description="Offline MobileNetV3 emotion evaluation")
     parser.add_argument("--smoke",   action="store_true",
                         help="Run synthetic smoke test (no dataset needed)")
     parser.add_argument("--fer2013", type=str, default=None,
@@ -213,7 +232,7 @@ def main():
     parser.add_argument("--testdir", type=str, default=None,
                         help="Path to folder-structured dataset (subfolders per emotion)")
     parser.add_argument("--split",   type=str, default="PublicTest",
-                        help="CSV split: Training | PublicTest | PrivateTest (default: PublicTest)")
+                        help="CSV split: Training | PublicTest | PrivateTest  (default: PublicTest)")
     parser.add_argument("--samples", type=int, default=1000,
                         help="Max images to evaluate (default: 1000, use 9999 for full set)")
     args = parser.parse_args()
