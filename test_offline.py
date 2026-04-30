@@ -61,7 +61,7 @@ def load_model():
     img_size     = config.get("img_size", 112)
     device       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    arch = config.get("model_name", "mobilenetv3_large_100")
+    arch = config.get("model_name", "efficientnet_b2")
     m    = timm.create_model(arch, num_classes=num_classes, pretrained=False)
 
     # Match the custom head from Colab training

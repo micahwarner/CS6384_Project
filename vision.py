@@ -108,7 +108,7 @@ def _ensure_face_model():
 
 def _load_model(config: dict, num_classes: int, device: torch.device) -> torch.nn.Module:
     m = timm.create_model(
-        'mobilenetv3_large_100',
+        'efficientnet_b2',
         pretrained=False,
         num_classes=num_classes
     )
@@ -189,18 +189,22 @@ class FaceProcessor:
             T.Normalize(mean=mean, std=std),
         ])
 
-        print(f"[Model] Loaded {self._config.get('model', 'mobilenet_v3_small')} "
+        print(f"[Model] Loaded {self._config.get('model_name', 'efficientnet_b2')} "
               f"({self._num_classes} classes) on {self._device}")
         print(f"[Model] Classes: {self._idx_to_class}")
 
         # ── Camera ────────────────────────────────────────────────────────────
+        print("[DEBUG] Opening camera...")
         self.cap = cv2.VideoCapture(camera_index)
         self.cap.set(cv2.CAP_PROP_FPS,          target_fps)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        print(f"[DEBUG] Camera opened: {self.cap.isOpened()}")
+
 
         # ── MediaPipe Face Landmarker (Tasks API — works on Windows and Linux) ─
         _ensure_face_model()
+        print("[DEBUG] face_landmarker.task ready")
         _opts = mp.tasks.vision.FaceLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=_FACE_MODEL_PATH),
             running_mode=mp.tasks.vision.RunningMode.VIDEO,
@@ -209,6 +213,7 @@ class FaceProcessor:
             min_face_presence_confidence=0.5,
             min_tracking_confidence=0.5,
         )
+        print("[DEBUG] MediaPipe landmarker ready")
         self.face_landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(_opts)
         self._detect_ts_ms   = 0
         self.show_dots       = False
@@ -240,7 +245,7 @@ class FaceProcessor:
 
         # ── Inference throttle — every 6 frames (~5 Hz @ 30 fps) ─────────────
         self._frame_count  = 0
-        self._fer_every    = 6
+        self._fer_every    = 10
         self._last_emotion = "neutral"
         self._last_scores  = {}
 

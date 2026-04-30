@@ -1,5 +1,5 @@
 {
-  "model_name": "mobilenetv3_large_100",
+  "model_name": "efficientnet_b2",
   "img_size": 112,
   "num_classes": 7,
   "emotions": [
@@ -21,5 +21,5 @@
     0.224,
     0.225
   ],
-  "best_val_acc": 0.8522
+  "best_val_acc": 0.8171
 }
