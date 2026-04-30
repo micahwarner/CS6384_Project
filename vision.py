@@ -8,6 +8,21 @@ import cv2
 import json
 import numpy as np
 import mediapipe as mp
+try:
+    from mediapipe.python.solutions.face_mesh_connections import FACEMESH_TESSELATION, FACEMESH_CONTOURS
+except (ModuleNotFoundError, ImportError):
+    try:
+        from mediapipe.solutions.face_mesh_connections import FACEMESH_TESSELATION, FACEMESH_CONTOURS
+    except (ModuleNotFoundError, ImportError, AttributeError):
+        # Hardcoded from mediapipe source — stable across versions
+        _OVAL  = frozenset([(10,338),(338,297),(297,332),(332,284),(284,251),(251,389),(389,356),(356,454),(454,323),(323,361),(361,288),(288,397),(397,365),(365,379),(379,378),(378,400),(400,377),(377,152),(152,148),(148,176),(176,149),(149,150),(150,136),(136,172),(172,58),(58,132),(132,93),(93,234),(234,127),(127,162),(162,21),(21,54),(54,103),(103,67),(67,109),(109,10)])
+        _LIPS  = frozenset([(61,146),(146,91),(91,181),(181,84),(84,17),(17,314),(314,405),(405,321),(321,375),(375,291),(61,185),(185,40),(40,39),(39,37),(37,0),(0,267),(267,269),(269,270),(270,409),(409,291),(78,95),(95,88),(88,178),(178,87),(87,14),(14,317),(317,402),(402,318),(318,324),(324,308),(78,191),(191,80),(80,81),(81,82),(82,13),(13,312),(312,311),(311,310),(310,415),(415,308)])
+        _LEYE  = frozenset([(263,249),(249,390),(390,373),(373,374),(374,380),(380,381),(381,382),(382,362),(263,466),(466,388),(388,387),(387,386),(386,385),(385,384),(384,398),(398,362)])
+        _REYE  = frozenset([(33,7),(7,163),(163,144),(144,145),(145,153),(153,154),(154,155),(155,133),(33,246),(246,161),(161,160),(160,159),(159,158),(158,157),(157,173),(173,133)])
+        _LBROW = frozenset([(276,283),(283,282),(282,295),(295,285),(300,293),(293,334),(334,296),(296,336)])
+        _RBROW = frozenset([(46,53),(53,52),(52,65),(65,55),(70,63),(63,105),(105,66),(66,107)])
+        FACEMESH_CONTOURS    = frozenset().union(_OVAL, _LIPS, _LEYE, _REYE, _LBROW, _RBROW)
+        FACEMESH_TESSELATION = None
 import torch
 import torchvision.transforms as T
 import time
@@ -196,7 +211,8 @@ class FaceProcessor:
         )
         self.face_landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(_opts)
         self._detect_ts_ms   = 0
-        self.show_mesh       = False
+        self.show_dots       = False
+        self.show_lines      = False
         self.show_confidence = False
 
         # ── Smoothing ─────────────────────────────────────────────────────────
@@ -501,13 +517,19 @@ class FaceProcessor:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, emo_color, 1, cv2.LINE_AA)
 
         # Face mesh overlay — uses cached result, no second MP inference
-        if self.show_mesh and self._last_mesh_results is not None:
+        if (self.show_dots or self.show_lines) and self._last_mesh_results is not None:
             if self._last_mesh_results.face_landmarks:
                 for face_lms in self._last_mesh_results.face_landmarks:
-                    for lm_pt in face_lms:
-                        cx = int(lm_pt.x * w)
-                        cy = int(lm_pt.y * h)
-                        cv2.circle(frame, (cx, cy), 1, (0, 255, 100), -1)
+                    pts = [(int(lm_pt.x * w), int(lm_pt.y * h)) for lm_pt in face_lms]
+                    if self.show_lines:
+                        if FACEMESH_TESSELATION is not None:
+                            for a, b in FACEMESH_TESSELATION:
+                                cv2.line(frame, pts[a], pts[b], (0, 255, 100), 1, cv2.LINE_AA)
+                        for a, b in FACEMESH_CONTOURS:
+                            cv2.line(frame, pts[a], pts[b], (0, 180, 255), 1, cv2.LINE_AA)
+                    if self.show_dots:
+                        for cx, cy in pts:
+                            cv2.circle(frame, (cx, cy), 1, (0, 255, 100), -1)
 
         # Feature text overlay
         lines = [
@@ -522,8 +544,9 @@ class FaceProcessor:
             cv2.putText(frame, line, (10, 24 + i * 22),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 100), 1, cv2.LINE_AA)
 
-        mesh_status = "ON" if self.show_mesh else "OFF"
-        cv2.putText(frame, f"Mesh[M]: {mesh_status}", (w - 140, 24),
+        cv2.putText(frame, f"Dots[M]: {'ON' if self.show_dots  else 'OFF'}", (w - 140, 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1, cv2.LINE_AA)
+        cv2.putText(frame, f"Lines[L]: {'ON' if self.show_lines else 'OFF'}", (w - 140, 46),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1, cv2.LINE_AA)
 
         # Confidence bars
@@ -580,7 +603,7 @@ class FaceProcessor:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.38, text_color, 1, cv2.LINE_AA)
 
         conf_status = "ON" if self.show_confidence else "OFF"
-        cv2.putText(frame, f"Conf[C]: {conf_status}", (w - 140, 46),
+        cv2.putText(frame, f"Conf[C]: {conf_status}", (w - 140, 68),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1, cv2.LINE_AA)
 
         return frame

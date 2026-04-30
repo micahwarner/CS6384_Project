@@ -16,7 +16,8 @@ Controls (OpenCV window):
     S         — print latency summary now
     E         — print emotion evaluation report now
     L         — cycle emotion labels (for building ground-truth dataset)
-    M         — toggle overlay mesh
+    M         — toggle landmark dots
+    L         — toggle mesh lines (both M+L = tessellation)
     C         — toggle emotion confidence bars
     F         — toggle fullscreen on/off
     TAB       — recalibrate
@@ -254,13 +255,16 @@ def main():
                     evaluator.report()
                 else:
                     print("[main] No evaluation records yet.")
-            elif key == ord('l') and args.eval:  # L: cycle GT label
-                gt_idx = (gt_idx + 1) % len(GT_LABELS)
-                print(f"[main] Ground-truth label → {GT_LABELS[gt_idx]}")
-            elif key == ord('m'):           # M: toggle mesh overlay
-                processor.face_mesh  # just access to confirm alive
-                processor.show_mesh = not processor.show_mesh
-                print(f"[main] Mesh overlay {'ON' if processor.show_mesh else 'OFF'}.")
+            elif key == ord('l'):
+                if args.eval:               # L: cycle GT label in eval mode
+                    gt_idx = (gt_idx + 1) % len(GT_LABELS)
+                    print(f"[main] Ground-truth label → {GT_LABELS[gt_idx]}")
+                else:                       # L: toggle mesh lines
+                    processor.show_lines = not processor.show_lines
+                    print(f"[main] Mesh lines {'ON' if processor.show_lines else 'OFF'}.")
+            elif key == ord('m'):           # M: toggle landmark dots
+                processor.show_dots = not processor.show_dots
+                print(f"[main] Landmark dots {'ON' if processor.show_dots else 'OFF'}.")
             elif key == ord('c'):           # C: toggle confidence bars
                 processor.show_confidence = not processor.show_confidence
                 print(f"[main] Confidence bars {'ON' if processor.show_confidence else 'OFF'}.")
