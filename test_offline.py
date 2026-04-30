@@ -52,18 +52,26 @@ LABEL_MAP = {e: e for e in FER2013_LABELS.values()}
 
 
 # ── Model Loading ──────────────────────────────────────────────────────────────
-
 def load_model():
     with open(CONFIG_PATH)    as f: config       = json.load(f)
     with open(CLASS_IDX_PATH) as f: class_to_idx = json.load(f)
 
     idx_to_class = {v: k for k, v in class_to_idx.items()}
     num_classes  = len(class_to_idx)
-    img_size     = config.get("img_size", 112)               # ← was 48
+    img_size     = config.get("img_size", 112)
     device       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    arch = config.get("model_name", "mobilenetv3_large_100") # ← was "model"
+    arch = config.get("model_name", "mobilenetv3_large_100")
     m    = timm.create_model(arch, num_classes=num_classes, pretrained=False)
+
+    # Match the custom head from Colab training
+    in_features  = m.classifier.in_features
+    m.classifier = torch.nn.Sequential(
+        torch.nn.Linear(in_features, 512),
+        torch.nn.Hardswish(),
+        torch.nn.Dropout(p=0.4),
+        torch.nn.Linear(512, num_classes)
+    )
 
     state = torch.load(MODEL_PATH, map_location=device)
     if isinstance(state, dict) and "model_state_dict" in state:
