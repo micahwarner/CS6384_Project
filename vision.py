@@ -3,12 +3,12 @@ vision.py — Webcam capture, MediaPipe landmark detection, feature extraction,
              and FER emotion classification via MobileNetV3 (PyTorch).
 """
 
+import os
 import cv2
 import json
 import numpy as np
 import mediapipe as mp
 import torch
-import torchvision.models as models
 import torchvision.transforms as T
 import time
 import warnings
@@ -75,10 +75,24 @@ FACE_LEFT  = 234
 FACE_RIGHT = 454
 
 
-# ── Model Loader ───────────────────────────────────────────────────────────────
+# ── MediaPipe Tasks face landmarker model ─────────────────────────────────────
+
+_FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_landmarker.task")
+_FACE_MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/"
+                    "face_landmarker/face_landmarker/float16/1/face_landmarker.task")
+
+def _ensure_face_model():
+    if not os.path.exists(_FACE_MODEL_PATH):
+        import urllib.request
+        print("[vision] Downloading face_landmarker.task …")
+        urllib.request.urlretrieve(_FACE_MODEL_URL, _FACE_MODEL_PATH)
+        print("[vision] Model ready.")
+
+
+# ── PyTorch Model Loader ───────────────────────────────────────────────────────
 
 def _load_model(config: dict, num_classes: int, device: torch.device) -> torch.nn.Module:
-    arch = config.get("model_name", "mobilenetv3_large_100") # ← was "model"
+    arch = config.get("model_name", "mobilenetv3_large_100")
     m    = timm.create_model(arch, num_classes=num_classes, pretrained=False)
 
     state = torch.load(MODEL_PATH, map_location=device)
@@ -128,12 +142,12 @@ class FaceProcessor:
                  emotion_smoothing: int   = 6):
 
         # ── Load config, class map, model ─────────────────────────────────────
-        with open(CONFIG_PATH)    as f: self._config    = json.load(f)
+        with open(CONFIG_PATH)    as f: self._config       = json.load(f)
         with open(CLASS_IDX_PATH) as f: self._class_to_idx = json.load(f)
 
         self._idx_to_class = {v: k for k, v in self._class_to_idx.items()}
         self._num_classes  = len(self._class_to_idx)
-        self._img_size = self._config.get("img_size", 112)
+        self._img_size     = self._config.get("img_size", 112)
         self._device       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self._model = _load_model(self._config, self._num_classes, self._device)
@@ -159,15 +173,18 @@ class FaceProcessor:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        # ── MediaPipe Face Mesh ────────────────────────────────────────────────
-        self.mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.6,
+        # ── MediaPipe Face Landmarker (Tasks API — works on Windows and Linux) ─
+        _ensure_face_model()
+        _opts = mp.tasks.vision.FaceLandmarkerOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=_FACE_MODEL_PATH),
+            running_mode=mp.tasks.vision.RunningMode.VIDEO,
+            num_faces=1,
+            min_face_detection_confidence=0.6,
+            min_face_presence_confidence=0.5,
             min_tracking_confidence=0.5,
         )
-        self.mp_drawing      = mp.solutions.drawing_utils
+        self.face_landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(_opts)
+        self._detect_ts_ms   = 0
         self.show_mesh       = False
         self.show_confidence = False
 
@@ -229,7 +246,7 @@ class FaceProcessor:
 
     def release(self):
         self.cap.release()
-        self.face_mesh.close()
+        self.face_landmarker.close()
 
     def reset_calibration(self):
         self._calib_frames   = 0
@@ -263,13 +280,12 @@ class FaceProcessor:
             if face_crop.size == 0:
                 return
 
-            # BGR → RGB for torchvision transform
             rgb_crop = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
             tensor   = self._transform(rgb_crop).unsqueeze(0).to(self._device)
 
             with torch.no_grad():
-                logits = self._model(tensor)                          # (1, num_classes)
-                probs  = torch.softmax(logits, dim=1).squeeze(0)      # (num_classes,)
+                logits = self._model(tensor)
+                probs  = torch.softmax(logits, dim=1).squeeze(0)
 
             scores = {
                 self._idx_to_class[i]: float(probs[i]) * 100
@@ -288,16 +304,18 @@ class FaceProcessor:
         h, w = frame.shape[:2]
         rgb  = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        results = self.face_mesh.process(rgb)
+        self._detect_ts_ms += 33
+        mp_img  = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        results = self.face_landmarker.detect_for_video(mp_img, self._detect_ts_ms)
         self._last_mesh_results = results
 
         features = FaceFeatures(timestamp=time.time())
 
-        if not results.multi_face_landmarks:
+        if not results.face_landmarks:
             features.emotion = self._get_majority_emotion("neutral")
             return features
 
-        lm = results.multi_face_landmarks[0].landmark
+        lm = results.face_landmarks[0]
 
         def pt(idx):
             return np.array([lm[idx].x * w, lm[idx].y * h])
@@ -465,32 +483,20 @@ class FaceProcessor:
                 (x1, y2,  1, -1),
                 (x2, y2, -1, -1),
             ]:
-                cv2.line(frame, (cx, cy), (cx + dx * corner, cy),            emo_color, thickness)
+                cv2.line(frame, (cx, cy), (cx + dx * corner, cy),               emo_color, thickness)
                 cv2.line(frame, (cx, cy), (cx,               cy + dy * corner), emo_color, thickness)
 
             cv2.putText(frame, "FER crop", (x1, max(y1 - 6, 12)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, emo_color, 1, cv2.LINE_AA)
 
-        # Face mesh overlay
+        # Face mesh overlay — uses cached result, no second MP inference
         if self.show_mesh and self._last_mesh_results is not None:
-            if self._last_mesh_results.multi_face_landmarks:
-                for face_landmarks in self._last_mesh_results.multi_face_landmarks:
-                    self.mp_drawing.draw_landmarks(
-                        image=frame,
-                        landmark_list=face_landmarks,
-                        connections=self.mp_face_mesh.FACEMESH_TESSELATION,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=self.mp_drawing.DrawingSpec(
-                            color=(0, 255, 100), thickness=1, circle_radius=1)
-                    )
-                    self.mp_drawing.draw_landmarks(
-                        image=frame,
-                        landmark_list=face_landmarks,
-                        connections=self.mp_face_mesh.FACEMESH_CONTOURS,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=self.mp_drawing.DrawingSpec(
-                            color=(0, 180, 255), thickness=1, circle_radius=1)
-                    )
+            if self._last_mesh_results.face_landmarks:
+                for face_lms in self._last_mesh_results.face_landmarks:
+                    for lm_pt in face_lms:
+                        cx = int(lm_pt.x * w)
+                        cy = int(lm_pt.y * h)
+                        cv2.circle(frame, (cx, cy), 1, (0, 255, 100), -1)
 
         # Feature text overlay
         lines = [
