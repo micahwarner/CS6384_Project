@@ -108,12 +108,12 @@ def _ensure_face_model():
 
 def _load_model(config: dict, num_classes: int, device: torch.device) -> torch.nn.Module:
     m = timm.create_model(
-        'efficientnet_b2',
+        'tf_efficientnetv2_s',
         pretrained=False,
-        num_classes=num_classes
+        num_classes=0
     )
 
-    in_features = m.classifier.in_features
+    in_features = m.num_features
     m.classifier = torch.nn.Sequential(
         torch.nn.Linear(in_features, 512),
         torch.nn.Hardswish(),

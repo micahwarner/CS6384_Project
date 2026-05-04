@@ -61,11 +61,11 @@ def load_model():
     img_size     = config.get("img_size", 112)
     device       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    arch = config.get("model_name", "efficientnet_b2")
-    m    = timm.create_model(arch, num_classes=num_classes, pretrained=False)
+    arch = config.get("model_name", "tf_efficientnetv2_s")  # ← updated default
+    m    = timm.create_model(arch, num_classes=0, pretrained=False)  # ← num_classes=0
 
     # Match the custom head from Colab training
-    in_features  = m.classifier.in_features
+    in_features  = m.num_features  # ← changed
     m.classifier = torch.nn.Sequential(
         torch.nn.Linear(in_features, 512),
         torch.nn.Hardswish(),
