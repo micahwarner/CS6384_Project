@@ -24,6 +24,7 @@ Controls (OpenCV window):
 """
 
 import argparse
+import json
 import sys
 import time
 import threading
@@ -166,6 +167,12 @@ def main():
     profiler = LatencyProfiler(window=90)
     evaluator = EmotionEvaluator()
 
+    # Session stats tracking
+    session_start     = time.time()
+    emotion_durations: dict = {}
+    last_emotion      = "neutral"
+    last_emotion_time = time.time()
+
     # State
     paused = False
     gt_idx = 0          # index into GT_LABELS for eval mode
@@ -189,6 +196,13 @@ def main():
             with profiler.measure("total"):
                 with profiler.measure("vision"):
                     features = processor.update()
+
+                # Accumulate time on current emotion
+                _t = time.time()
+                emotion_durations[last_emotion] = emotion_durations.get(last_emotion, 0.0) + (_t - last_emotion_time)
+                last_emotion_time = _t
+                if features.face_detected:
+                    last_emotion = features.emotion
 
                 frame = processor.get_annotated_frame()
                 if frame is None:
@@ -317,6 +331,27 @@ def main():
 
     print("[main] profiler.print_summary()...")
     profiler.print_summary()
+
+    # Write session stats for the launcher to display
+    try:
+        _t = time.time()
+        emotion_durations[last_emotion] = emotion_durations.get(last_emotion, 0.0) + (_t - last_emotion_time)
+        stats = {
+            "mode": "eval" if args.eval else ("vision" if args.no_audio else "full"),
+            "session_duration": round(_t - session_start, 1),
+            "emotion_durations": {
+                k: round(v, 2)
+                for k, v in sorted(emotion_durations.items(), key=lambda x: -x[1])
+                if v >= 0.5
+            },
+        }
+        if args.eval and evaluator.records:
+            stats["eval"] = evaluator.report(print_report=False)
+        with open("session_stats.json", "w") as _f:
+            json.dump(stats, _f, indent=2)
+    except Exception as _e:
+        print(f"[main] Could not write session stats: {_e}")
+
     print("[main] Done.")
 
 

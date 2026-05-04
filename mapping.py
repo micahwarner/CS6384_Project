@@ -44,6 +44,7 @@ class MusicParameters:
     # Harmony
     scale: List[int] = field(default_factory=list)
     root_note: int = 60
+    chord_root_note: int = 60       # MIDI note of the active chord root (for bass)
     chord_voicing: List[int] = field(default_factory=list)
     chord_size: int = 3
 
@@ -54,6 +55,14 @@ class MusicParameters:
     emotion: str = "neutral"
     trigger_note: bool = True
     sustain: float = 0.5
+
+    # Background pad layer
+    bg_program: int = 88        # MIDI program for background instrument
+    bg_velocity: int = 35       # volume of background chord
+    bg_chord_changed: bool = False  # signals audio engine to update bg chord
+
+    # Percussion (MIDI channel 9) – list of (note, velocity) pairs for this slot
+    drum_notes: list = field(default_factory=list)
 
 
 # Scale Definitions
@@ -215,6 +224,91 @@ EMOTION_PRESETS = {
 }
 
 
+_TRANSITION_SECS = 1.5   # seconds to ramp between emotion presets
+_PHRASE_BEATS    = 16    # melodic phrase length in beats
+_SLOT_BEATS      = 0.5   # one 8th-note per rhythm slot
+
+# Per-emotion chord progressions: list of (scale_degree_index, duration_in_beats).
+# Degrees are 0-based indices into the emotion's scale array.
+# Chord tones are built as a triad: [deg, deg+2, deg+4] (mod scale length).
+CHORD_PROGRESSIONS = {
+    "happy":    [(0, 4), (3, 4), (4, 4), (0, 4)],           # I – IV – V – I  (Lydian)
+    "sad":      [(0, 6), (5, 2), (6, 4), (0, 4)],           # i – VI – VII – i (Harmonic minor)
+    "angry":    [(0, 4), (1, 2), (6, 2), (5, 4), (0, 4)],   # i – ♭II – VII – v – i (Phrygian)
+    "surprise": [(0, 2), (2, 2), (4, 2), (2, 2)],           # Whole-tone walk
+    "fear":     [(0, 4), (6, 4), (3, 4), (0, 4)],           # i – VII° – iv° – i (Diminished)
+    "disgust":  [(0, 4), (4, 2), (0, 2), (3, 4)],           # Blues  i – V – i – IV
+    "neutral":  [(0, 4), (2, 4), (4, 4), (2, 4)],           # Pentatonic loop
+}
+
+# 16-step rhythmic patterns (1=play, 0=rest) at the trigger subdivision.
+# Each slot fires once per trigger_every interval; the pattern determines whether
+# that slot produces a note or a rest.
+# 8-step patterns (one bar of 4/4 at 8th-note resolution, indexed by _SLOT_BEATS).
+# Each slot fires on a beat-synchronized grid so the pattern always sounds in time.
+# GM percussion note numbers used in drum patterns.
+DRUM_NOTE_VELOCITY = {
+    36: 90,  # Bass Drum 1
+    38: 78,  # Acoustic Snare
+    42: 58,  # Closed Hi-Hat
+    46: 65,  # Open Hi-Hat
+    49: 88,  # Crash Cymbal
+}
+
+# 8-step drum patterns for emotions that have percussion.
+# Each step is a list of GM percussion note numbers (empty = rest).
+# Only happy, angry, and surprise have drums — slower/tense emotions stay silent.
+DRUM_PATTERNS = {
+    "happy":    [[36, 42], [42], [38, 42], [42], [36, 42], [42], [38, 42], [42]],
+    "angry":    [[36],     [36], [38],     [],   [36],     [],   [38],     [36]],
+    "surprise": [[36, 49], [],   [],       [38], [36],     [],   [42],     [38]],
+}
+
+RHYTHM_PATTERNS = {
+    "happy":    [1, 1, 0, 1, 1, 0, 1, 0],  # syncopated, energetic
+    "sad":      [1, 0, 0, 0, 1, 0, 0, 0],  # sparse quarter notes
+    "angry":    [1, 1, 0, 1, 0, 1, 1, 0],  # driving, punchy
+    "surprise": [1, 0, 0, 1, 1, 0, 0, 1],  # off-beat, erratic
+    "fear":     [1, 0, 0, 1, 0, 0, 0, 1],  # 3+3+2 grouping, tense
+    "disgust":  [1, 0, 1, 0, 0, 1, 0, 1],  # uneven, bluesy
+    "neutral":  [1, 0, 1, 0, 1, 0, 1, 0],  # steady quarter notes
+}
+
+# Melodic motifs per emotion.
+# Each motif is a short sequence of chord-relative indices:
+#   0 = chord root, 1 = chord third, 2 = chord fifth
+#  -1 = one scale step below root (passing tone)
+#   3 = one scale step above fifth (passing tone)
+# Motifs cycle in order; 50% chance to advance to the next motif when one finishes.
+MELODIC_MOTIFS = {
+    "happy":    [[0, 2, 1, 0],       # root → fifth → third → root
+                 [0, 1, 2, 3, 2],    # stepwise ascent with passing tone
+                 [2, 1, 0, 2]],      # from fifth back home
+    "sad":      [[2, 1, 0],          # sigh: fifth → third → root
+                 [0, -1, 0, 1]],     # oscillate with chromatic drooping
+    "angry":    [[0, 0, 2, 0],       # root hammer with fifth accent
+                 [2, 1, 0, 0]],      # descend to heavy root landing
+    "surprise": [[0, 2, 3, 1],       # leap up then scatter
+                 [2, 0, 1, 3]],      # surprise zigzag
+    "fear":     [[0, -1, 0, 1],      # chromatic neighbor motion
+                 [2, 1, 0, -1]],     # creeping descent
+    "disgust":  [[0, -1, 0, 1, 0],   # blue-note feel
+                 [0, 0, 2, 1, 0]],   # root emphasis with resolution
+    "neutral":  [[0, 1, 2, 1],       # simple arc up
+                 [2, 1, 0, 1]],      # simple arc down
+}
+
+# Background pad instrument per emotion: (MIDI program, velocity)
+BG_INSTRUMENTS = {
+    "happy":    (89, 40),   # Warm Pad — full warmth behind piano
+    "sad":      (91, 30),   # Choir Pad — ethereal sadness
+    "angry":    (48, 50),   # String Ensemble — heavy bed under organ
+    "surprise": (94, 38),   # Halo Pad — sparkly shimmer
+    "fear":     (92, 28),   # Bowed Pad — eerie glass-like texture
+    "disgust":  (95, 25),   # Sweep Pad — dark murk
+    "neutral":  (89, 28),   # Warm Pad — gentle warmth
+}
+
 FER_ALIAS = {
     "happy": "happy",
     "sad": "sad",
@@ -244,6 +338,18 @@ class ExpressionMusicMapper:
         self._emotion_hold_count = 0
         self._emotion_hold_frames = 4
         self._start_time = time.time()
+        self._from_preset: dict = EMOTION_PRESETS["neutral"]
+        self._transition_start: float = 0.0
+        self._total_beats: float = 0.0
+        self._last_map_time: float = time.time()
+        self._rhythm_idx: int = 0
+        self._last_trigger_beat: float = 0.0
+        self._motif_pos: int = 0
+        self._motif_idx: int = 0
+        self._current_motifs: list = MELODIC_MOTIFS["neutral"]
+        self._fixed_bpm: float = 93.0  # locked per emotion, random within range
+        self._last_bpm: float = 93.0   # smoothed toward _fixed_bpm each frame
+        self._last_chord_root_deg: int = -1
 
     # Public
 
@@ -260,6 +366,17 @@ class ExpressionMusicMapper:
             else:
                 self._emotion_hold_count += 1
                 if self._emotion_hold_count >= self._emotion_hold_frames:
+                    self._from_preset = EMOTION_PRESETS[self._current_emotion]
+                    self._transition_start = now
+                    self._total_beats = 0.0
+                    self._last_map_time = now
+                    self._rhythm_idx = 0
+                    self._last_trigger_beat = 0.0
+                    self._motif_pos = 0
+                    self._motif_idx = 0
+                    new_range = EMOTION_PRESETS[emotion_key]["bpm_range"]
+                    self._fixed_bpm = random.uniform(new_range[0], new_range[1])
+                    self._last_chord_root_deg = -1
                     self._current_emotion = emotion_key
                     self._pending_emotion = None
                     self._scale_cursor = 0
@@ -270,6 +387,7 @@ class ExpressionMusicMapper:
 
         emotion_key = self._current_emotion
         preset = EMOTION_PRESETS[emotion_key]
+        self._current_motifs = MELODIC_MOTIFS[emotion_key]
 
         params = MusicParameters(emotion=features.emotion)
 
@@ -278,23 +396,67 @@ class ExpressionMusicMapper:
         params.root_note = preset["root"]
         params.chord_size = preset.get("chord_size", 3)
 
+        params.sustain = preset.get("sustain", 0.3)
+
+        # Transition alpha: smoothstep curve over _TRANSITION_SECS
+        raw_alpha = np.clip((now - self._transition_start) / _TRANSITION_SECS, 0.0, 1.0)
+        alpha = raw_alpha * raw_alpha * (3.0 - 2.0 * raw_alpha)
+        fp = self._from_preset
+
+        # BPM: fixed per emotion (random within range on switch), EMA for smooth transition
+        self._last_bpm = self._last_bpm * 0.97 + self._fixed_bpm * 0.03
+        params.bpm = self._last_bpm
+
+        # Beat / chord / phrase tracking
+        dt = now - self._last_map_time
+        self._last_map_time = now
+        self._total_beats += dt * params.bpm / 60.0
+
+        progression = CHORD_PROGRESSIONS[emotion_key]
+        prog_total = sum(b for _, b in progression)
+        beat_in_prog = self._total_beats % prog_total
+        cumulative, chord_root_deg = 0.0, 0
+        for deg, dur in progression:
+            cumulative += dur
+            if beat_in_prog < cumulative:
+                chord_root_deg = deg
+                break
+        n_scale = len(scale_offsets)
+        chord_tones = [chord_root_deg % n_scale,
+                       (chord_root_deg + 2) % n_scale,
+                       (chord_root_deg + 4) % n_scale]
+        phrase_phase = (self._total_beats % _PHRASE_BEATS) / _PHRASE_BEATS
+        params.chord_root_note = preset["root"] + scale_offsets[chord_root_deg % n_scale]
+
+        # Signal background layer to update whenever the chord changes
+        if chord_root_deg != self._last_chord_root_deg:
+            self._last_chord_root_deg = chord_root_deg
+            params.bg_chord_changed = True
+        bg_prog, bg_vel = BG_INSTRUMENTS[emotion_key]
+        params.bg_program  = bg_prog
+        params.bg_velocity = bg_vel
+
         prog_num, prog_name = INSTRUMENTS[preset["instrument"]]
         params.program = prog_num
         params.instrument_name = prog_name
-        params.sustain = preset.get("sustain", 0.3)
 
-        # BPM
-        bpm_lo, bpm_hi = preset["bpm_range"]
-        bpm_modulation = np.clip(features.smile_width, 0, 1)
-        params.bpm = bpm_lo + bpm_modulation * (bpm_hi - bpm_lo)
+        # Velocity: interpolated range, then scaled by emotion confidence
+        # Low confidence → stays near vel_lo; high confidence → full dynamic range
+        confidence = np.clip(features.emotion_scores.get(emotion_key, 100) / 100, 0.0, 1.0)
+        vel_lo = fp["velocity_range"][0] + alpha * (preset["velocity_range"][0] - fp["velocity_range"][0])
+        vel_hi = fp["velocity_range"][1] + alpha * (preset["velocity_range"][1] - fp["velocity_range"][1])
+        base_vel = vel_lo + features.mouth_openness * (vel_hi - vel_lo)
+        params.velocity = int(np.clip(vel_lo + confidence * (base_vel - vel_lo), 0, 127))
 
-        # Velocity
-        vel_lo, vel_hi = preset["velocity_range"]
-        params.velocity = int(vel_lo + features.mouth_openness * (vel_hi - vel_lo))
-        params.velocity = int(np.clip(params.velocity, 0, 127))
+        # Phrase arc: 75% at start → swell to full → resolve to 80% at end
+        if phrase_phase < 0.5:
+            phrase_factor = 0.75 + 0.25 * (phrase_phase / 0.5)
+        else:
+            phrase_factor = 1.0 - 0.20 * ((phrase_phase - 0.5) / 0.5)
+        params.velocity = int(np.clip(params.velocity * phrase_factor, 0, 127))
 
         #Pitch selection
-        brow_shift = round((features.eyebrow_raise - 0.5) * 10)
+        brow_shift = int(np.clip(round((features.eyebrow_raise - 0.5) * 4), -1, 1))
         cursor = (self._scale_cursor + brow_shift) % len(scale_offsets)
         base_offset = scale_offsets[cursor]
 
@@ -314,55 +476,68 @@ class ExpressionMusicMapper:
         # Expression
         params.pitch_bend = float(np.clip((features.head_tilt - 0.5) * 3.0, -2.0, 2.0))
         params.pan = float(np.clip((features.head_tilt - 0.5) * 2.0, -1, 1))
-        params.note_duration = preset["note_duration"]
+        params.note_duration = fp["note_duration"] + alpha * (preset["note_duration"] - fp["note_duration"])
 
-        # Timing / density
-        elapsed = now - self._last_note_time
-        beat_duration = 60.0 / max(params.bpm, 1.0)
+        # Timing: advance one slot per 8th note; fire only if the pattern says so.
+        # The while loop catches up cleanly if frames are slow or BPM is very high.
+        params.trigger_note = False
+        params.drum_notes = []
+        while self._total_beats >= self._last_trigger_beat + _SLOT_BEATS:
+            self._last_trigger_beat += _SLOT_BEATS
+            pattern = RHYTHM_PATTERNS[emotion_key]
+            slot_idx = self._rhythm_idx % len(pattern)
+            slot_is_note = pattern[slot_idx] == 1
 
-        activity = preset.get("activity", 0.5)
-        density_factor = np.interp(activity, [0.0, 1.0], [1.35, 0.35])
-        trigger_every = max(0.12, self.note_interval * density_factor, beat_duration * 0.30)
+            drum_pat = DRUM_PATTERNS.get(emotion_key, [])
+            if drum_pat:
+                params.drum_notes = [
+                    (note, DRUM_NOTE_VELOCITY.get(note, 70))
+                    for note in drum_pat[slot_idx % len(drum_pat)]
+                ]
 
-        if elapsed >= trigger_every:
-            if random.random() < preset.get("rest_bias", 0.0):
-                params.trigger_note = False
-                self._last_note_time = now
-            else:
+            self._rhythm_idx = (self._rhythm_idx + 1) % len(pattern)
+            if slot_is_note and random.random() >= preset.get("rest_bias", 0.0):
                 params.trigger_note = True
-                self._last_note_time = now
-                self._advance_cursor(scale_offsets, preset)
-        else:
-            params.trigger_note = False
+                self._advance_cursor(scale_offsets, preset, chord_tones, phrase_phase)
+                break
 
         return params
 
     # Helpers
 
-    def _advance_cursor(self, scale: list, preset: dict):
-        repeat_bias = preset.get("repeat_bias", 0.2)
-        max_leap = max(1, int(preset.get("max_leap", 2)))
-        brightness = preset.get("brightness", 0.5)
+    def _advance_cursor(self, scale: list, preset: dict,
+                        chord_tones: list, phrase_phase: float):
+        n = len(scale)
 
-        roll = random.random()
+        if random.random() < preset.get("repeat_bias", 0.2):
+            return
 
-        if roll < repeat_bias:
-            step = 0
-        else:
-            leap = random.randint(1, max_leap)
-            direction = self._step_dir
+        if phrase_phase > 0.75 and random.random() < 0.65:
+            # Phrase cadence: resolve to tonic
+            self._scale_cursor = 0
+            self._motif_pos = 0
+            return
 
-            if brightness > 0.65 and random.random() < 0.60:
-                direction = 1
-            elif brightness < 0.35 and random.random() < 0.60:
-                direction = -1
+        # Advance through the current motif sequentially
+        motif = self._current_motifs[self._motif_idx % len(self._current_motifs)]
+        el = motif[self._motif_pos % len(motif)]
+        self._motif_pos += 1
+        if self._motif_pos >= len(motif):
+            self._motif_pos = 0
+            if random.random() < 0.5:   # 50% chance to pick the next motif
+                self._motif_idx = (self._motif_idx + 1) % len(self._current_motifs)
 
-            step = direction * leap
-
-        self._scale_cursor = (self._scale_cursor + step) % len(scale)
-
-        if random.random() < 0.18:
-            self._step_dir *= -1
+        # Resolve motif element to a scale cursor position
+        if el == 0:
+            self._scale_cursor = chord_tones[0]
+        elif el == 1:
+            self._scale_cursor = chord_tones[1] if len(chord_tones) > 1 else chord_tones[0]
+        elif el == 2:
+            self._scale_cursor = chord_tones[-1]
+        elif el == -1:
+            self._scale_cursor = (chord_tones[0] - 1) % n
+        elif el == 3:
+            self._scale_cursor = (chord_tones[-1] + 1) % n
 
     def get_preset_info(self, emotion: str) -> str:
         key = FER_ALIAS.get(emotion, "neutral")

@@ -61,6 +61,10 @@ class MidiPlayer:
         # Bass instrument: Acoustic Bass
         self.out.set_instrument(32, self._bass_channel)
 
+        self._bg_channel = 2
+        self._bg_chord: list = []
+        self._bg_program: int = -1
+
     # helpers
 
     @staticmethod
@@ -183,10 +187,38 @@ class MidiPlayer:
             chord_notes = [cls._clip_note(root)]
         return chord_notes
 
-    # PLayback
+    # Background chord
+
+    def _update_bg_chord(self, params: MusicParameters):
+        """Swap in a new sustained background chord. Call with self._lock held."""
+        if params.bg_program != self._bg_program:
+            self.out.write_short(0xB0 | self._bg_channel, 64, 0)
+            for note in self._bg_chord:
+                self.out.note_off(note, 0, self._bg_channel)
+            self.out.set_instrument(params.bg_program, self._bg_channel)
+            self._bg_program = params.bg_program
+        else:
+            for note in self._bg_chord:
+                self.out.note_off(note, 0, self._bg_channel)
+
+        # Place chord root in a middle-low register, below the melody
+        bg_root = params.chord_root_note
+        while bg_root > 60:
+            bg_root -= 12
+        while bg_root < 36:
+            bg_root += 12
+
+        chord = self._build_chord(bg_root, params.scale, params.root_note, 3)
+        self._bg_chord = chord
+
+        self.out.write_short(0xB0 | self._bg_channel, 64, 127)   # sustain on
+        for note in chord:
+            self.out.note_on(note, params.bg_velocity, self._bg_channel)
+
+    # Playback
 
     def play(self, params: MusicParameters):
-        if not params.trigger_note or self._closing:
+        if self._closing:
             return
 
         bass_note = None
@@ -194,6 +226,17 @@ class MidiPlayer:
 
         with self._lock:
             if self._closing:
+                return
+
+            if params.bg_chord_changed:
+                self._update_bg_chord(params)
+
+            # Percussion on GM channel 9 — fires every slot, independent of melody
+            # Channel 9 drums decay naturally so note_off is not needed
+            for note, vel in params.drum_notes:
+                self.out.note_on(note, vel, 9)
+
+            if not params.trigger_note:
                 return
 
             self._sustain_token += 1
@@ -249,7 +292,7 @@ class MidiPlayer:
             # Bass every other trigger
             self._bass_counter += 1
             if self._bass_counter % 2 == 0:
-                bass_note = self._clip_note(params.root_note - 12)
+                bass_note = self._clip_note(params.chord_root_note - 12)
                 bass_vel = int(np.clip(params.velocity * 0.50, 1, 110))
                 self.out.note_on(bass_note, bass_vel, self._bass_channel)
 
@@ -292,7 +335,7 @@ class MidiPlayer:
         # send fast MIDI shutdown signals
         try:
             with self._lock:
-                for ch in [self._current_channel, self._bass_channel]:
+                for ch in [self._current_channel, self._bass_channel, self._bg_channel]:
                     for msg in [
                         (0xB0 | ch, 64,  0),    # sustain off
                         (0xB0 | ch, 123, 0),    # all notes off
@@ -428,7 +471,7 @@ class SynthPlayer:
             wave += partial * gain
 
         # Bass reinforcement
-        bass_freq = self._midi_to_freq(max(24, p.root_note - 12))
+        bass_freq = self._midi_to_freq(max(24, p.chord_root_note - 12))
         wave += 0.18 * np.sin(2 * np.pi * bass_freq * t)
 
         peak = np.max(np.abs(wave)) + 1e-9
