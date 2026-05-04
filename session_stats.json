@@ -1,9 +1,0 @@
-{
-  "mode": "audio",
-  "session_duration": 30.5,
-  "emotion_durations": {
-    "happy": 12.3,
-    "sad": 8.1,
-    "neutral": 10.1
-  }
-}

@@ -34,6 +34,8 @@ class MidiPlayer:
         pygame.midi.init()
         if device_id < 0:
             device_id = pygame.midi.get_default_output_id()
+        if device_id < 0:
+            raise RuntimeError("No MIDI output device found")
 
         self.out = pygame.midi.Output(device_id, latency=1)
 
@@ -320,48 +322,51 @@ class MidiPlayer:
     # Cleanup
 
     def close(self):
-        import threading
         import pygame.midi
 
-        # kill the scheduler immediately
+        # Signal scheduler to stop — fast, no blocking
         with self._event_cv:
             self._closing = True
             self._events.clear()
             self._event_cv.notify_all()
 
-        if self._scheduler_thread.is_alive():
-            self._scheduler_thread.join(timeout=0.15)
-
-        # send fast MIDI shutdown signals
-        try:
-            with self._lock:
-                for ch in [self._current_channel, self._bass_channel, self._bg_channel]:
-                    for msg in [
-                        (0xB0 | ch, 64,  0),    # sustain off
-                        (0xB0 | ch, 123, 0),    # all notes off
-                        (0xB0 | ch, 120, 0),    # all sound off
-                    ]:
-                        try:
-                            self.out.write_short(*msg)
-                        except Exception:
-                            pass
-                try:
-                    self.out.close()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        # pygame.midi.quit() on a daemon thread; ok if it hangs
-        def _quit():
+        # All blocking MIDI teardown runs on a daemon thread so a frozen
+        # pygame.midi driver or a scheduler thread stuck in note_off() can
+        # never hang the main thread (and therefore the launcher).
+        def _shutdown():
+            try:
+                if self._scheduler_thread.is_alive():
+                    self._scheduler_thread.join(timeout=0.3)
+            except Exception:
+                pass
+            try:
+                with self._lock:
+                    for ch in [self._current_channel,
+                                self._bass_channel,
+                                self._bg_channel]:
+                        for msg in [
+                            (0xB0 | ch, 64,  0),    # sustain off
+                            (0xB0 | ch, 123, 0),    # all notes off
+                            (0xB0 | ch, 120, 0),    # all sound off
+                        ]:
+                            try:
+                                self.out.write_short(*msg)
+                            except Exception:
+                                pass
+                    try:
+                        self.out.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             try:
                 pygame.midi.quit()
             except Exception:
                 pass
 
-        t = threading.Thread(target=_quit, daemon=True)
+        t = threading.Thread(target=_shutdown, daemon=True)
         t.start()
-        t.join(timeout=0.3)   # wait at most 300ms, then abandon it
+        t.join(timeout=0.5)   # give up after 500 ms; daemon dies with the process
 
 
 # Synthesizer Player (Fallback)
@@ -421,14 +426,20 @@ class SynthPlayer:
         while self._running:
             with self._lock:
                 p = self._current_params
+                self._current_params = None  # consume once so we don't replay stale notes
 
             if p is None:
                 time.sleep(0.02)
                 continue
 
-            samples = self._synthesize(p)
-            sound = pygame.sndarray.make_sound(samples)
-            self._channel.play(sound)
+            try:
+                samples = self._synthesize(p)
+                sound = pygame.sndarray.make_sound(samples)
+                self._channel.play(sound)
+            except Exception as e:
+                print(f"[SynthPlayer] Audio error: {e}")
+                time.sleep(0.05)
+                continue
 
             wait_time = max(0.05, p.note_duration * 0.80)
             time.sleep(wait_time)

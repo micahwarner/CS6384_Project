@@ -212,6 +212,12 @@ class Launcher:
             self._set_children_state(child, state)
 
     def _start(self):
+        stats_path = os.path.join(SCRIPT_DIR, "session_stats.json")
+        try:
+            os.remove(stats_path)
+        except FileNotFoundError:
+            pass
+
         mode = self.mode.get()
 
         if mode == "audio":
@@ -248,7 +254,7 @@ class Launcher:
 
         threading.Thread(target=_run, daemon=True).start()
 
-    def _on_end(self, returncode: int):  # noqa: ARG002
+    def _on_end(self, _returncode: int):
         self.root.deiconify()
         self.start_btn.configure(state="normal")
         # Non-zero codes on WSL are normal (signal termination) — don't alarm the user
@@ -302,50 +308,100 @@ class Launcher:
     def _build_stats_chart(self, win, stats):
         import matplotlib
         matplotlib.use("TkAgg")
+        import numpy as np
         from matplotlib.figure import Figure
+        from matplotlib.gridspec import GridSpec
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
         emotions_data = stats.get("emotion_durations", {})
         has_eval      = bool(stats.get("eval"))
-        n_rows        = 2 if has_eval else 1
-        fig = Figure(figsize=(5, n_rows * 2.8 + 0.4), facecolor=BG2)
-        fig.subplots_adjust(left=0.22, right=0.96, hspace=0.55,
-                            top=0.92, bottom=0.10)
+
+        if has_eval:
+            fig = Figure(figsize=(10, 5.6), facecolor=BG2)
+            gs  = GridSpec(2, 2, figure=fig,
+                           left=0.12, right=0.97, top=0.92, bottom=0.10,
+                           hspace=0.55, wspace=0.50)
+        else:
+            fig = Figure(figsize=(5, 3.2), facecolor=BG2)
+            gs  = GridSpec(1, 1, figure=fig,
+                           left=0.22, right=0.96, top=0.92, bottom=0.12)
 
         # ── Chart 1: time per emotion ──────────────────────────────────────
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax1.set_facecolor(BG2)
         if emotions_data:
-            ax1 = fig.add_subplot(n_rows, 1, 1)
-            ax1.set_facecolor(BG2)
-            labels   = list(emotions_data.keys())
-            values   = list(emotions_data.values())
-            colours  = [EMOTION_COLORS.get(e, "#888888") for e in labels]
+            labels  = list(emotions_data.keys())
+            values  = list(emotions_data.values())
+            colours = [EMOTION_COLORS.get(e, "#888888") for e in labels]
             ax1.barh(labels, values, color=colours, alpha=0.88, height=0.55)
             ax1.set_xlabel("seconds", color=FG_DIM, fontsize=8)
-            ax1.set_title("Time per Emotion", color=FG, fontsize=9,
-                          fontweight="bold", pad=6)
-            ax1.tick_params(colors=FG_DIM, labelsize=8)
-            for sp in ax1.spines.values():
-                sp.set_color(BG3)
-            ax1.xaxis.label.set_color(FG_DIM)
+        ax1.set_title("Time per Emotion", color=FG, fontsize=9,
+                      fontweight="bold", pad=6)
+        ax1.tick_params(colors=FG_DIM, labelsize=8)
+        for sp in ax1.spines.values():
+            sp.set_color(BG3)
+        ax1.xaxis.label.set_color(FG_DIM)
 
-        # ── Chart 2: per-class F1 (eval only) ─────────────────────────────
-        if has_eval:
-            ev   = stats["eval"]
-            pc   = ev.get("per_class", {})
-            acc  = ev.get("accuracy", 0)
-            ax2  = fig.add_subplot(n_rows, 1, 2)
-            ax2.set_facecolor(BG2)
-            cls     = list(pc.keys())
-            f1s     = [pc[c]["f1"] for c in cls]
-            colours2 = [EMOTION_COLORS.get(c, "#888888") for c in cls]
-            ax2.barh(cls, f1s, color=colours2, alpha=0.88, height=0.55)
-            ax2.set_xlim(0, 1)
-            ax2.set_xlabel("F1 score", color=FG_DIM, fontsize=8)
-            ax2.set_title(f"Per-class F1  (overall accuracy {acc:.1%})",
+        if not has_eval:
+            canvas = FigureCanvasTkAgg(fig, master=win)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True, padx=12, pady=12)
+            return
+
+        ev  = stats["eval"]
+        pc  = ev.get("per_class", {})
+        acc = ev.get("accuracy", 0)
+
+        # ── Chart 2: per-class F1 ──────────────────────────────────────────
+        ax2 = fig.add_subplot(gs[1, 0])
+        ax2.set_facecolor(BG2)
+        cls      = list(pc.keys())
+        f1s      = [pc[c]["f1"] for c in cls]
+        colours2 = [EMOTION_COLORS.get(c, "#888888") for c in cls]
+        ax2.barh(cls, f1s, color=colours2, alpha=0.88, height=0.55)
+        ax2.set_xlim(0, 1)
+        ax2.set_xlabel("F1 score", color=FG_DIM, fontsize=8)
+        ax2.set_title(f"Per-class F1  (accuracy {acc:.1%})",
+                      color=FG, fontsize=9, fontweight="bold", pad=6)
+        ax2.tick_params(colors=FG_DIM, labelsize=8)
+        for sp in ax2.spines.values():
+            sp.set_color(BG3)
+
+        # ── Chart 3: confusion matrix (spans full right column) ────────────
+        cm_data = ev.get("confusion_matrix")
+        if cm_data:
+            cm      = np.array(cm_data, dtype=float)
+            row_sum = cm.sum(axis=1, keepdims=True)
+            cm_norm = np.divide(cm, row_sum, out=np.zeros_like(cm), where=row_sum != 0)
+
+            ax3 = fig.add_subplot(gs[:, 1])
+            ax3.set_facecolor(BG2)
+            im = ax3.imshow(cm_norm, cmap="Blues", vmin=0, vmax=1, aspect="auto")
+
+            short = [c[:3] for c in cls]
+            ax3.set_xticks(range(len(cls)))
+            ax3.set_yticks(range(len(cls)))
+            ax3.set_xticklabels(short, fontsize=7, color=FG_DIM,
+                                rotation=45, ha="right")
+            ax3.set_yticklabels(short, fontsize=7, color=FG_DIM)
+            ax3.set_xlabel("Predicted", color=FG_DIM, fontsize=8)
+            ax3.set_ylabel("Ground Truth", color=FG_DIM, fontsize=8)
+            ax3.set_title("Confusion Matrix (row-normalised)",
                           color=FG, fontsize=9, fontweight="bold", pad=6)
-            ax2.tick_params(colors=FG_DIM, labelsize=8)
-            for sp in ax2.spines.values():
+            ax3.tick_params(colors=FG_DIM)
+            for sp in ax3.spines.values():
                 sp.set_color(BG3)
+
+            for i in range(len(cls)):
+                for j in range(len(cls)):
+                    count = int(cm[i, j])
+                    if count > 0:
+                        txt_color = "white" if cm_norm[i, j] > 0.5 else FG_DIM
+                        ax3.text(j, i, str(count), ha="center", va="center",
+                                 fontsize=6, color=txt_color)
+
+            cbar = fig.colorbar(im, ax=ax3, fraction=0.046, pad=0.04)
+            cbar.ax.tick_params(labelcolor=FG_DIM, labelsize=7)
 
         canvas = FigureCanvasTkAgg(fig, master=win)
         canvas.draw()
