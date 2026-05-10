@@ -193,7 +193,7 @@ Expected FER2013 labels:
 
 ## Credits
 
-CS6384 Computer Vision course project by the repository author(s), combining:
+CS6384 Computer Vision course project, combining:
 
 - MediaPipe face landmarks,
 - PyTorch FER classification, and
