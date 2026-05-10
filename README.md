@@ -183,13 +183,6 @@ Expected FER2013 labels:
 - `fer2013_eval_results.csv` - offline FER evaluation records
 - `folder_eval_results.csv` - folder-based offline evaluation records
 
-## Notes for Class Demo
-
-- Start with `python launcher.py` for the cleanest demo flow.
-- If MIDI is unavailable, enable software synth (`--synth` or launcher option).
-- Use `--no-audio` if you want to focus only on CV behavior.
-- Use eval mode with `L` key to label ground truth and report quick metrics live.
-
 ## Troubleshooting
 
 - **Camera not opening**: verify camera index (`--camera 0`, `--camera 1`, ...).
