@@ -131,14 +131,14 @@ class EmotionEvaluator:
 class LatencyProfiler:
     """
     Context-manager based latency profiler.  Tracks per-stage timing in the
-    processing pipeline and prints a rolling summary.
+    processing pipeline and prints a rolling summary
 
     Stages in project:
-      "capture"    — cv2 frame read
-      "vision"     — MediaPipe + FER inference
-      "mapping"    — ExpressionMusicMapper.map()
-      "audio"      — AudioEngine.play()
-      "total"      — entire loop iteration
+      "capture"    - cv2 frame read
+      "vision"     - MediaPipe + FER inference
+      "mapping"    - ExpressionMusicMapper.map()
+      "audio"      - AudioEngine.play()
+      "total"      - entire loop iteration
     """
 
     def __init__(self, window: int = 60):

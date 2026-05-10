@@ -2,8 +2,7 @@
 audio.py: Real-time audio engine using pygame.midi with a numpy/pygame
 fallback synthesizer
 
-Backends
-────────
+Options:
 1. MidiPlayer: primary, low-latency system MIDI output
 2. SynthPlayer: fallback, pure Python additive synthesis
 
@@ -107,7 +106,7 @@ class MidiPlayer:
 
                 heapq.heappop(self._events)
 
-            # Execute event outside condition wait, but still under MIDI lock
+            # Execute event outside condition wait but still under MIDI lock
             with self._lock:
                 if self._closing:
                     break
@@ -233,7 +232,7 @@ class MidiPlayer:
             if params.bg_chord_changed:
                 self._update_bg_chord(params)
 
-            # Percussion on GM channel 9 — fires every slot, independent of melody
+            # Percussion on GM channel 9; fires every slot, independent of melody
             # Channel 9 drums decay naturally so note_off is not needed
             for note, vel in params.drum_notes:
                 self.out.note_on(note, vel, 9)
@@ -257,11 +256,11 @@ class MidiPlayer:
             self._send_pan(params.pan * 0.35, self._bass_channel)
             self._send_pitch_bend(params.pitch_bend, self._current_channel)
 
-            # If dry note, explicitly lift sustain
+            # if dry note, explicitly lift sustain
             if params.sustain <= 0:
                 self.out.write_short(0xB0 | self._current_channel, 64, 0)
 
-            # Release current chord's note-ons; sustained notes will naturally continue if pedal is down
+            # release current chord's note-ons; sustained notes will naturally continue if pedal is down
             for note in self._current_chord:
                 self.out.note_off(note, 0, self._current_channel)
 
@@ -319,12 +318,12 @@ class MidiPlayer:
                 {"channel": self._current_channel, "token": sustain_token}
             )
 
-    # Cleanup
+    # cleanup
 
     def close(self):
         import pygame.midi
 
-        # Signal scheduler to stop — fast, no blocking
+        # signal scheduler to stop
         with self._event_cv:
             self._closing = True
             self._events.clear()
@@ -332,7 +331,7 @@ class MidiPlayer:
 
         # All blocking MIDI teardown runs on a daemon thread so a frozen
         # pygame.midi driver or a scheduler thread stuck in note_off() can
-        # never hang the main thread (and therefore the launcher).
+        # never hang the main thread
         def _shutdown():
             try:
                 if self._scheduler_thread.is_alive():
@@ -555,12 +554,12 @@ class SynthPlayer:
             self._thread.join(timeout=0.5)
 
 
-#AudioEngine — Auto-Selects Backend
+#AudioEngine - auto-selects backend
 
 class AudioEngine:
     """
     Picks MidiPlayer when system MIDI is available,
-    otherwise falls back to SynthPlayer.
+    otherwise falls back to SynthPlayer
     """
 
     def __init__(self, force_synth: bool = False):

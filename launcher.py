@@ -1,11 +1,11 @@
 """
-launcher.py — Settings UI for the Facial Expression Music Generator.
+launcher.py - Settings UI for the Facial Expression Music Generator.
 
 Run with:
     python launcher.py
 
 Select a mode and options, then click Start. The launcher hides while
-the session runs and reappears when you quit (Q / ESC / window ✕).
+the session runs and reappears when you quit (Q / ESC / window ✕)
 """
 
 import tkinter as tk
@@ -28,7 +28,7 @@ EMOTION_COLORS = {
     "neutral":  "#888888",
 }
 
-# ── Colour palette ─────────────────────────────────────────────────────────────
+# Colour palette
 BG        = "#1a1a2e"
 BG2       = "#16213e"
 BG3       = "#0f3460"
@@ -49,7 +49,7 @@ class Launcher:
         self._build()
         self._stats_win = None
 
-    # ── Style ──────────────────────────────────────────────────────────────────
+    # Style
 
     def _configure_style(self):
         s = ttk.Style(self.root)
@@ -70,7 +70,7 @@ class Launcher:
         s.configure("Start.TButton",      background=ACCENT, foreground="white",
                     font=("Helvetica", 11, "bold"), padding=(18, 8))
 
-        # Hover / active / disabled state colours — keeps text readable on dark bg
+        # Hover / active / disabled state colours - keeps text readable on dark bg
         s.map("TRadiobutton",
               background=[("active", BG3), ("disabled", BG)],
               foreground=[("active", FG),  ("disabled", FG_DIM)])
@@ -91,7 +91,7 @@ class Launcher:
         self.root.option_add("*TCombobox*Listbox.selectBackground", BG3)
         self.root.option_add("*TCombobox*Listbox.selectForeground", FG)
 
-    # ── UI construction ────────────────────────────────────────────────────────
+    # UI construction
 
     def _build(self):
         root = self.root
@@ -107,7 +107,7 @@ class Launcher:
         body = ttk.Frame(root, padding=(18, 14, 18, 14))
         body.pack(fill="both")
 
-        # ── Mode ──────────────────────────────────────────────────────────────
+        # Mode
         mode_lf = ttk.LabelFrame(body, text="MODE", padding=(12, 8))
         mode_lf.pack(fill="x", pady=(0, 10))
 
@@ -122,7 +122,7 @@ class Launcher:
             ttk.Radiobutton(mode_lf, text=label, variable=self.mode, value=val,
                             command=self._on_mode_change).pack(anchor="w", pady=1)
 
-        # ── Camera ────────────────────────────────────────────────────────────
+        # Camera
         self.cam_lf = ttk.LabelFrame(body, text="CAMERA", padding=(12, 8))
         self.cam_lf.pack(fill="x", pady=(0, 10))
 
@@ -158,7 +158,7 @@ class Launcher:
                  text="↑ lower = smoother/slower response   higher = more reactive/jittery",
                  fg=FG_DIM, bg=BG, font=("Helvetica", 8)).pack(anchor="w", pady=(2, 0))
 
-        # ── Audio ─────────────────────────────────────────────────────────────
+        # Audio
         audio_lf = ttk.LabelFrame(body, text="AUDIO BACKEND", padding=(12, 8))
         audio_lf.pack(fill="x", pady=(0, 10))
 
@@ -168,7 +168,7 @@ class Launcher:
         ttk.Radiobutton(audio_lf, text="Software synth  (no MIDI device required)",
                         variable=self.synth, value=True).pack(anchor="w", pady=1)
 
-        # ── Options ───────────────────────────────────────────────────────────
+        # Options
         opt_lf = ttk.LabelFrame(body, text="OPTIONS", padding=(12, 8))
         opt_lf.pack(fill="x", pady=(0, 14))
 
@@ -180,7 +180,7 @@ class Launcher:
         ttk.Checkbutton(opt_lf, text="Show emotion confidence bars",
                         variable=self.show_conf).pack(anchor="w", pady=1)
 
-        # ── Start + status ────────────────────────────────────────────────────
+        # Start + status
         bot = ttk.Frame(body)
         bot.pack(fill="x")
 
@@ -196,10 +196,10 @@ class Launcher:
 
         self._on_mode_change()
 
-    # ── Callbacks ──────────────────────────────────────────────────────────────
+    # Callbacks
 
     def _on_mode_change(self):
-        """Disable camera settings when audio-only mode is selected."""
+        """Disable camera settings when audio-only mode is selected"""
         state = "disabled" if self.mode.get() == "audio" else "normal"
         self._set_children_state(self.cam_lf, state)
 
@@ -257,7 +257,7 @@ class Launcher:
     def _on_end(self, _returncode: int):
         self.root.deiconify()
         self.start_btn.configure(state="normal")
-        # Non-zero codes on WSL are normal (signal termination) — don't alarm the user
+        # Non-zero codes on WSL are normal (signal termination), don't alarm the user
         self._set_status("Session ended — ready", FG_GREEN)
 
         stats_path = os.path.join(SCRIPT_DIR, "session_stats.json")
@@ -272,7 +272,7 @@ class Launcher:
         self.status_var.set(text)
         self.status_lbl.configure(fg=colour)
 
-    # ── Stats popup ────────────────────────────────────────────────────────────
+    # Stats popup
 
     def _show_stats(self, stats: dict):
         if self._stats_win and self._stats_win.winfo_exists():
@@ -326,7 +326,7 @@ class Launcher:
             gs  = GridSpec(1, 1, figure=fig,
                            left=0.22, right=0.96, top=0.92, bottom=0.12)
 
-        # ── Chart 1: time per emotion ──────────────────────────────────────
+        # Chart 1: time per emotion
         ax1 = fig.add_subplot(gs[0, 0])
         ax1.set_facecolor(BG2)
         if emotions_data:
@@ -352,7 +352,7 @@ class Launcher:
         pc  = ev.get("per_class", {})
         acc = ev.get("accuracy", 0)
 
-        # ── Chart 2: per-class F1 ──────────────────────────────────────────
+        # Chart 2: per-class F1
         ax2 = fig.add_subplot(gs[1, 0])
         ax2.set_facecolor(BG2)
         cls      = list(pc.keys())
@@ -367,7 +367,7 @@ class Launcher:
         for sp in ax2.spines.values():
             sp.set_color(BG3)
 
-        # ── Chart 3: confusion matrix (spans full right column) ────────────
+        # Chart 3: confusion matrix (spans full right column)
         cm_data = ev.get("confusion_matrix")
         if cm_data:
             cm      = np.array(cm_data, dtype=float)
@@ -434,7 +434,7 @@ class Launcher:
                          fg=EMOTION_COLORS.get(cls, FG_DIM), bg=BG,
                          font=("Courier", 9)).pack(anchor="w")
 
-    # ── Entry point ────────────────────────────────────────────────────────────
+    # Entry point
 
     def run(self):
         self.root.mainloop()

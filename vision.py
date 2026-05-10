@@ -38,7 +38,7 @@ warnings.filterwarnings("ignore")
 logging.getLogger("py.warnings").setLevel(logging.ERROR)
 
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
+# Paths
 
 MODEL_DIR       = Path("models")
 MODEL_PATH      = MODEL_DIR / "best_model.pth"
@@ -46,11 +46,11 @@ CLASS_IDX_PATH  = MODEL_DIR / "class_to_idx.json"
 CONFIG_PATH     = MODEL_DIR / "config.json"
 
 
-# ── Data Structures ────────────────────────────────────────────────────────────
+# Data Structures
 
 @dataclass
 class FaceFeatures:
-    """Normalized facial feature values, all in [0.0, 1.0] unless noted."""
+    """Normalized facial feature values, all in [0.0, 1.0] unless noted"""
     mouth_openness: float = 0.0
     smile_width:    float = 0.0
     eyebrow_raise:  float = 0.0
@@ -62,7 +62,7 @@ class FaceFeatures:
     timestamp:      float = 0.0
 
 
-# ── MediaPipe Landmark Indices ─────────────────────────────────────────────────
+# MediaPipe Landmark Indices
 
 MOUTH_TOP    = 13
 MOUTH_BOTTOM = 14
@@ -90,7 +90,7 @@ FACE_LEFT  = 234
 FACE_RIGHT = 454
 
 
-# ── MediaPipe Tasks face landmarker model ─────────────────────────────────────
+# MediaPipe Tasks face landmarker model
 
 _FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_landmarker.task")
 _FACE_MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/"
@@ -104,7 +104,7 @@ def _ensure_face_model():
         print("[vision] Model ready.")
 
 
-# ── PyTorch Model Loader ───────────────────────────────────────────────────────
+# PyTorch Model Loader
 
 def _load_model(config: dict, num_classes: int, device: torch.device) -> torch.nn.Module:
     m = timm.create_model(
@@ -129,10 +129,10 @@ def _load_model(config: dict, num_classes: int, device: torch.device) -> torch.n
     return m
 
 
-# ── Temporal Smoother ──────────────────────────────────────────────────────────
+# Temporal Smoother
 
 class TemporalSmoother:
-    """Exponential moving average for stable feature values."""
+    """Exponential moving average for stable feature values"""
 
     def __init__(self, alpha: float = 0.3, history_size: int = 5):
         self.alpha        = alpha
@@ -157,7 +157,7 @@ class TemporalSmoother:
         return features
 
 
-# ── FaceProcessor ──────────────────────────────────────────────────────────────
+# FaceProcessor
 
 class FaceProcessor:
 
@@ -167,7 +167,7 @@ class FaceProcessor:
                  smooth_alpha:      float = 0.3,
                  emotion_smoothing: int   = 6):
 
-        # ── Load config, class map, model ─────────────────────────────────────
+        # Load config, class map, model
         with open(CONFIG_PATH)    as f: self._config       = json.load(f)
         with open(CLASS_IDX_PATH) as f: self._class_to_idx = json.load(f)
 
@@ -193,7 +193,7 @@ class FaceProcessor:
               f"({self._num_classes} classes) on {self._device}")
         print(f"[Model] Classes: {self._idx_to_class}")
 
-        # ── Camera ────────────────────────────────────────────────────────────
+        # Camera
         print("[DEBUG] Opening camera...")
         self.cap = cv2.VideoCapture(camera_index)
         self.cap.set(cv2.CAP_PROP_FPS,          target_fps)
@@ -202,7 +202,7 @@ class FaceProcessor:
         print(f"[DEBUG] Camera opened: {self.cap.isOpened()}")
 
 
-        # ── MediaPipe Face Landmarker (Tasks API — works on Windows and Linux) ─
+        # MediaPipe Face Landmarker (Tasks API - works on Windows and Linux)
         _ensure_face_model()
         print("[DEBUG] face_landmarker.task ready")
         _opts = mp.tasks.vision.FaceLandmarkerOptions(
@@ -220,17 +220,17 @@ class FaceProcessor:
         self.show_lines      = False
         self.show_confidence = False
 
-        # ── Smoothing ─────────────────────────────────────────────────────────
+        # Smoothing
         self.smoother        = TemporalSmoother(alpha=smooth_alpha)
         self.emotion_history = deque(maxlen=emotion_smoothing)
 
-        # ── State ─────────────────────────────────────────────────────────────
+        # State
         self.last_features       = FaceFeatures()
         self.frame: Optional[np.ndarray] = None
         self._last_mesh_results  = None
         self._last_crop_box      = None
 
-        # ── Calibration ───────────────────────────────────────────────────────
+        # Calibration
         self._calib_frames   = 0
         self._raw_brow_vals  = []
         self._raw_eye_vals   = []
@@ -243,14 +243,14 @@ class FaceProcessor:
             "smile":         None, "smile_std":    None,
         }
 
-        # ── Inference throttle — every 6 frames (~5 Hz @ 30 fps) ─────────────
+        # Inference throttle — every 6 frames (~5 Hz @ 30 fps)
         self._frame_count  = 0
         self._fer_every    = 10
         self._last_emotion = "neutral"
         self._last_scores  = {}
 
 
-    # ── Public API ─────────────────────────────────────────────────────────────
+    # Public API
 
     def is_opened(self) -> bool:
         return self.cap.isOpened()
@@ -290,11 +290,11 @@ class FaceProcessor:
         print("[Calibration] Reset — sit neutral and face the camera.")
 
 
-    # ── Internal: MobileNetV3 Inference ───────────────────────────────────────
+    # Internal: EfficientNetv2S Inference
 
     def _classify_crop(self, frame: np.ndarray, lm, w: int, h: int):
         """
-        Crop face using MediaPipe bounding box, run MobileNetV3 inference.
+        Crop face using MediaPipe bounding box, run model inference.
         Updates self._last_emotion, self._last_scores, self._last_crop_box.
         """
         try:
@@ -330,7 +330,7 @@ class FaceProcessor:
             pass
 
 
-    # ── Internal: Frame Processing ─────────────────────────────────────────────
+    # Internal: Frame Processing
 
     def _process_frame(self, frame: np.ndarray) -> FaceFeatures:
         h, w = frame.shape[:2]
@@ -357,7 +357,7 @@ class FaceProcessor:
         face_height = np.linalg.norm(pt(CHIN) - pt(NOSE_TIP)) * 2.0 + 1e-6
         face_width  = np.linalg.norm(pt(FACE_RIGHT) - pt(FACE_LEFT)) + 1e-6
 
-        # ── Mouth openness ────────────────────────────────────────────────────
+        # Mouth openness
         mouth_gap       = np.linalg.norm(pt(MOUTH_BOTTOM) - pt(MOUTH_TOP))
         raw_mouth_ratio = mouth_gap / (face_height * 0.15)
 
@@ -373,7 +373,7 @@ class FaceProcessor:
             raw_mouth = raw_mouth_ratio
         features.mouth_openness = float(np.clip(raw_mouth, 0, 1))
 
-        # ── Smile width ───────────────────────────────────────────────────────
+        # Smile width
         mouth_w         = np.linalg.norm(pt(MOUTH_RIGHT) - pt(MOUTH_LEFT))
         raw_smile_ratio = mouth_w / face_width
 
@@ -389,7 +389,7 @@ class FaceProcessor:
             raw_smile = (raw_smile_ratio - 0.30) / 0.25
         features.smile_width = float(np.clip(raw_smile, 0, 1))
 
-        # ── Eyebrow raise ─────────────────────────────────────────────────────
+        # Eyebrow raise
         left_brow_mid  = (pt(LEFT_BROW_INNER)  + pt(LEFT_BROW_OUTER))  / 2
         right_brow_mid = (pt(RIGHT_BROW_INNER) + pt(RIGHT_BROW_OUTER)) / 2
         left_eye_mid   = (pt(LEFT_EYE_TOP)     + pt(LEFT_EYE_BOTTOM))  / 2
@@ -412,7 +412,7 @@ class FaceProcessor:
             raw_brow = raw_brow_ratio
         features.eyebrow_raise = float(np.clip(raw_brow, 0, 1))
 
-        # ── Eye openness ──────────────────────────────────────────────────────
+        # Eye openness
         def ear(top, bottom, left, right):
             vertical   = np.linalg.norm(pt(top)  - pt(bottom))
             horizontal = np.linalg.norm(pt(left) - pt(right))
@@ -433,7 +433,7 @@ class FaceProcessor:
             raw_eye = (avg_ear - 0.15) / 0.25
         features.eye_openness = float(np.clip(raw_eye, 0, 1))
 
-        # ── Head tilt ─────────────────────────────────────────────────────────
+        # Head tilt
         left_x  = lm[FACE_LEFT].x
         right_x = lm[FACE_RIGHT].x
         nose_x  = lm[NOSE_TIP].x
@@ -441,7 +441,7 @@ class FaceProcessor:
             np.clip((nose_x - left_x) / (right_x - left_x + 1e-6), 0, 1)
         )
 
-        # ── MobileNetV3 inference every N frames ──────────────────────────────
+        # EfficientNet v2 inference every N frames
         if self._frame_count % self._fer_every == 0:
             self._classify_crop(frame, lm, w, h)
 
@@ -478,7 +478,7 @@ class FaceProcessor:
                       f"spread={self._baselines['smile_std']:.3f}")
 
 
-    # ── Draw ───────────────────────────────────────────────────────────────────
+    # Draw
 
     def _draw_debug(self, frame: np.ndarray, f: FaceFeatures) -> np.ndarray:
         h, w = frame.shape[:2]
@@ -521,7 +521,7 @@ class FaceProcessor:
             cv2.putText(frame, "FER crop", (x1, max(y1 - 6, 12)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, emo_color, 1, cv2.LINE_AA)
 
-        # Face mesh overlay — uses cached result, no second MP inference
+        # Face mesh overlay - uses cached result, no second MP inference
         if (self.show_dots or self.show_lines) and self._last_mesh_results is not None:
             if self._last_mesh_results.face_landmarks:
                 for face_lms in self._last_mesh_results.face_landmarks:

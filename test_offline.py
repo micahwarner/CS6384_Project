@@ -36,7 +36,7 @@ warnings.filterwarnings("ignore")
 logging.getLogger("py.warnings").setLevel(logging.ERROR)
 
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
+# Paths
 
 MODEL_DIR      = Path("models")
 MODEL_PATH     = MODEL_DIR / "best_model.pth"
@@ -51,7 +51,7 @@ FER2013_LABELS = {
 LABEL_MAP = {e: e for e in FER2013_LABELS.values()}
 
 
-# ── Model Loading ──────────────────────────────────────────────────────────────
+# Model Loading
 def load_model():
     with open(CONFIG_PATH)    as f: config       = json.load(f)
     with open(CLASS_IDX_PATH) as f: class_to_idx = json.load(f)
@@ -61,11 +61,11 @@ def load_model():
     img_size     = config.get("img_size", 112)
     device       = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    arch = config.get("model_name", "tf_efficientnetv2_s")  # ← updated default
-    m    = timm.create_model(arch, num_classes=0, pretrained=False)  # ← num_classes=0
+    arch = config.get("model_name", "tf_efficientnetv2_s") 
+    m    = timm.create_model(arch, num_classes=0, pretrained=False) 
 
     # Match the custom head from Colab training
-    in_features  = m.num_features  # ← changed
+    in_features  = m.num_features  
     m.classifier = torch.nn.Sequential(
         torch.nn.Linear(in_features, 512),
         torch.nn.Hardswish(),
@@ -92,11 +92,11 @@ def load_model():
     return m, transform, idx_to_class, device
 
 
-# ── Inference ──────────────────────────────────────────────────────────────────
+# Inference
 
 def predict(model, transform, idx_to_class, device, img_bgr: np.ndarray) -> str:
     """
-    Classify a BGR face crop using MobileNetV3.
+    Classify a BGR face crop using efficient net v2 s
     Returns the predicted emotion label string.
     """
     rgb    = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
@@ -107,10 +107,10 @@ def predict(model, transform, idx_to_class, device, img_bgr: np.ndarray) -> str:
     return idx_to_class[int(probs.argmax())]
 
 
-# ── Smoke Test ─────────────────────────────────────────────────────────────────
+# Smoke Test
 
 def smoke_test():
-    """Verify the evaluation module works with synthetic predictions."""
+    """Verify the evaluation module works with synthetic predictions"""
     print("\n[smoke] Running synthetic evaluation smoke test…")
     evaluator = EmotionEvaluator()
     np.random.seed(42)
@@ -122,10 +122,10 @@ def smoke_test():
     evaluator.report()
 
 
-# ── CSV Mode ───────────────────────────────────────────────────────────────────
+# CSV Mode
 
 def eval_on_fer2013(csv_path: str, split: str = "PublicTest", max_samples: int = 1000):
-    """Run MobileNetV3 on FER-2013 images from a CSV export and compute metrics."""
+    """Run EfficientNetv2S on FER-2013 images from a CSV export and compute metrics."""
     import pandas as pd
 
     print(f"\n[eval] Loading FER-2013 from {csv_path} (split={split})…")
@@ -158,11 +158,10 @@ def eval_on_fer2013(csv_path: str, split: str = "PublicTest", max_samples: int =
     print("\n[eval] Results saved to fer2013_eval_results.csv")
 
 
-# ── Folder Mode ────────────────────────────────────────────────────────────────
+# Folder Mode
 
 def eval_on_folder(data_dir: str, max_samples: int = 1000):
-    """
-    Run MobileNetV3 on a folder-structured dataset.
+    """model on a folder-structured dataset
 
     Expected layout:
         data_dir/
@@ -229,7 +228,7 @@ def eval_on_folder(data_dir: str, max_samples: int = 1000):
     print("\n[eval] Results saved to folder_eval_results.csv")
 
 
-# ── Entry Point ────────────────────────────────────────────────────────────────
+# Entry Point
 
 def main():
     parser = argparse.ArgumentParser(description="Offline MobileNetV3 emotion evaluation")

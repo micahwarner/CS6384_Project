@@ -4,11 +4,11 @@ mapping.py: Translates FaceFeatures into MusicParameters.
 Emotion sets the tonal context (mode, key, tempo, timbre, sustain, register)
 Facial geometry then modulates within that context in real time:
 
-  mouth_openness  → volume
-  smile_width     → tempo / energy
-  eyebrow_raise   → pitch contour
-  eye_openness    → octave lift/drop
-  head_tilt       → stereo pan / pitch bend
+  mouth_openness  -> volume
+  smile_width     -> tempo / energy
+  eyebrow_raise   -> pitch contour
+  eye_openness    -> octave lift/drop
+  head_tilt       -> stereo pan / pitch bend
 
 """
 
@@ -281,10 +281,10 @@ RHYTHM_PATTERNS = {
 #   3 = one scale step above fifth (passing tone)
 # Motifs cycle in order; 50% chance to advance to the next motif when one finishes.
 MELODIC_MOTIFS = {
-    "happy":    [[0, 2, 1, 0],       # root → fifth → third → root
+    "happy":    [[0, 2, 1, 0],       # root -> fifth -> third -> root
                  [0, 1, 2, 3, 2],    # stepwise ascent with passing tone
                  [2, 1, 0, 2]],      # from fifth back home
-    "sad":      [[2, 1, 0],          # sigh: fifth → third → root
+    "sad":      [[2, 1, 0],          # sigh: fifth -> third -> root
                  [0, -1, 0, 1]],     # oscillate with chromatic drooping
     "angry":    [[0, 0, 2, 0],       # root hammer with fifth accent
                  [2, 1, 0, 0]],      # descend to heavy root landing
@@ -441,14 +441,14 @@ class ExpressionMusicMapper:
         params.instrument_name = prog_name
 
         # Velocity: interpolated range, then scaled by emotion confidence
-        # Low confidence → stays near vel_lo; high confidence → full dynamic range
+        # Low confidence -> stays near vel_lo; high confidence -> full dynamic range
         confidence = np.clip(features.emotion_scores.get(emotion_key, 100) / 100, 0.0, 1.0)
         vel_lo = fp["velocity_range"][0] + alpha * (preset["velocity_range"][0] - fp["velocity_range"][0])
         vel_hi = fp["velocity_range"][1] + alpha * (preset["velocity_range"][1] - fp["velocity_range"][1])
         base_vel = vel_lo + features.mouth_openness * (vel_hi - vel_lo)
         params.velocity = int(np.clip(vel_lo + confidence * (base_vel - vel_lo), 0, 127))
 
-        # Phrase arc: 75% at start → swell to full → resolve to 80% at end
+        # Phrase arc: 75% at start -> swell to full -> resolve to 80% at end
         if phrase_phase < 0.5:
             phrase_factor = 0.75 + 0.25 * (phrase_phase / 0.5)
         else:
